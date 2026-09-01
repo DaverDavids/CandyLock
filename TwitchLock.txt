@@ -21,7 +21,6 @@
 
 // ── GPIO ──────────────────────────────────────────────────────────────────────
 #define TRIGGER_PIN      3
-#define LED_PIN          0
 #define TRIGGER_MS    3000
 
 // ── Twitch IRC ────────────────────────────────────────────────────────────────
@@ -51,9 +50,6 @@ String  blacklist;     // comma-separated usernames
 bool    captiveMode    = false;
 unsigned long triggerEnd = 0;
 unsigned long lastTriggerAt = 0;
-unsigned long ledTestEnd   = 0;
-
-String  wifiSSID, wifiPSK;   // resolved WiFi creds used for runtime reconnect
 
 // ── Chat readout ring buffer ──────────────────────────────────────────────────
 #define CHAT_LOG_SIZE 30
@@ -140,18 +136,6 @@ void doTrigger() {
     lastTriggerAt = millis();
   }
   triggerEnd = millis() + TRIGGER_MS;
-}
-
-// Non-blocking LED status indicator. LED_PIN is LOW normally, solid HIGH while
-// the solenoid is active, blinked at ~5Hz while Twitch IRC is connected, and
-// solid HIGH during a manual LED test pulse.
-void updateLED() {
-  if (triggerEnd != 0 || millis() < ledTestEnd) {
-    digitalWrite(LED_PIN, HIGH);
-    return;
-  }
-  boolean connected = irc.connected();
-  digitalWrite(LED_PIN, connected ? (millis() % 200 < 100) : LOW);
 }
 
 // Parse a Twitch IRC PRIVMSG line and decide whether to trigger
@@ -277,11 +261,6 @@ void ircMaintain() {
   if (millis() - lastAttempt < 5000) return;   // back off ~5s, never block
   lastAttempt = millis();
 
-  // Make sure the previous socket is fully cleaned up before trying again.
-  // Reusing a WiFiClient without stop() can leave a stale lwIP PCB that makes
-  // subsequent connect() calls return false forever after the first drop.
-  irc.stop();
-
   DBG("[IRC] Connecting to %s:%d\n", TWITCH_HOST, TWITCH_PORT);
   if (irc.connect(TWITCH_HOST, TWITCH_PORT, 8000)) {
     ircBegin();
@@ -381,36 +360,11 @@ void handleWifiSave() {
   ESP.restart();
 }
 
-// Manual unlock. Only functional when debug mode is enabled; the server-side
-// guard is the real protection (not just hiding the button).
-void handleTrigger() {
-#if !ENABLE_DEBUG
-  server.send(403, "text/plain", "Disabled (debug off)");
-  return;
-#endif
-  doTrigger();
-  server.send(200, "text/plain", "Triggered");
-}
-
-// Manual GPIO0 LED test/pulse. Purely for debugging the wiring, gated behind
-// ENABLE_DEBUG like the other manual controls.
-void handleLedTest() {
-#if !ENABLE_DEBUG
-  server.send(403, "text/plain", "Disabled (debug off)");
-  return;
-#endif
-  digitalWrite(LED_PIN, HIGH);
-  ledTestEnd = millis() + 500;
-  server.send(200, "text/plain", "LED on");
-}
-
 void setupWebServer() {
   server.on("/",       HTTP_GET,  handleRoot);
   server.on("/status", HTTP_GET,  handleStatus);
   server.on("/save",   HTTP_POST, handleSave);
   server.on("/wifi",   HTTP_POST, handleWifiSave);
-  server.on("/trigger",HTTP_POST, handleTrigger);
-  server.on("/ledtest",HTTP_POST, handleLedTest);
   server.onNotFound([](){ server.sendHeader("Location","http://192.168.4.1"); server.send(302); });
   server.begin();
   DBG("[WEB] Server started\n");
@@ -438,8 +392,6 @@ bool connectWifi() {
 
   String ssid = savedSSID.length() > 0 ? savedSSID : MYSSID;
   String psk  = savedPSK.length()  > 0 ? savedPSK  : MYPSK;
-  wifiSSID = ssid;
-  wifiPSK  = psk;
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid.c_str(), psk.c_str());
@@ -458,22 +410,6 @@ bool connectWifi() {
   return false;
 }
 
-// Non-blocking WiFi maintainer. Reconnects the station automatically after a
-// dropout so IRC and the web server recover without a reboot.
-void wifiMaintain() {
-  if (captiveMode) return;
-  if (WiFi.status() == WL_CONNECTED) return;
-  if (wifiSSID.isEmpty()) return;
-
-  static unsigned long lastAttempt = 0;
-  if (millis() - lastAttempt < 10000) return;    // back off ~10s, never block
-  lastAttempt = millis();
-
-  DBG("[WIFI] Reconnecting to %s\n", wifiSSID.c_str());
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(wifiSSID.c_str(), wifiPSK.c_str());
-}
-
 // ── Setup ─────────────────────────────────────────────────────────────────────
 void setup() {
 #if ENABLE_DEBUG
@@ -489,9 +425,6 @@ void setup() {
   digitalWrite(TRIGGER_PIN, LOW);
   pinMode(TRIGGER_PIN, OUTPUT);
   digitalWrite(TRIGGER_PIN, LOW);
-
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
 
   loadPrefs();
 
@@ -521,8 +454,6 @@ void setup() {
 
 // ── Loop ──────────────────────────────────────────────────────────────────────
 void loop() {
-  updateLED();
-
   if (captiveMode) {
     dns.processNextRequest();
     server.handleClient();
@@ -541,9 +472,6 @@ void loop() {
     DBG("[TRIGGER] GPIO%d LOW\n", TRIGGER_PIN);
     triggerEnd = 0;
   }
-
-  // Auto-reconnect WiFi (won't block the web page) before IRC reattempts.
-  wifiMaintain();
 
   // Non-blocking IRC connect/reconnect (backed off, never blocks the page)
   ircMaintain();

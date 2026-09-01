@@ -5,21 +5,27 @@ DISCLAIMER: This code was made with with the help of AI/LLMs.
 ESP32-C3 sketch that monitors a Twitch channel's IRC chat and pulls **GPIO 3 HIGH for 5 seconds** when a qualifying message is received.
 
 ## Features
-- Configurable via built-in web UI (Twitch-purple themed)
+- Built-in web UI (Twitch-purple themed) with **live status & chat readout**
+  - WiFi connection status + IP
+  - Twitch IRC connection status
+  - Solenoid trigger status
+  - Live chat feed (last 30 messages); lines that trigger the unlock are highlighted
+- Configurable via web UI (Twitch channel and trigger rules)
+- **No manual unlock control** — the solenoid is only triggered by qualifying chat messages
 - Trigger filters: broadcaster / mod / VIP / subscriber / any chatter / whitelisted users
 - Optional command matching (e.g. `!lock`)
 - Per-user blacklist
 - ArduinoOTA firmware updates
-- mDNS (`http://twitchlock.local`)
+- mDNS (`http://candylock.local`)
 - WiFi captive portal when credentials are missing/wrong
 - All settings persist across reboots and firmware flashes (NVS flash)
 - Feature toggles at the top of the sketch
 
 ## Top-of-sketch Toggles
 ```cpp
-#define ENABLE_OTA    1   // 0 = disable ArduinoOTA
+#define ENABLE_OTA    0   // 0 = disable ArduinoOTA
 #define ENABLE_WEBUI  1   // 0 = disable web UI
-#define ENABLE_DEBUG  1   // 0 = disable all Serial output
+#define ENABLE_DEBUG  0   // 0 = disable all Serial output
 ```
 
 ## Setup

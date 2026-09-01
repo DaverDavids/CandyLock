@@ -8,9 +8,11 @@ String buildHTML(
   bool tCmd, bool tAny, bool tVIP, bool tSub, bool tMod, bool tBroad,
   const String &cmds,
   const String &whitelist,
-  const String &blacklist
+  const String &blacklist,
+  bool debug
 ) {
   auto chk = [](bool b) -> String { return b ? " checked" : ""; };
+  String locked = debug ? "" : " disabled";
 
   String html = R"rawhtml(
 <!DOCTYPE html>
@@ -18,7 +20,7 @@ String buildHTML(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CandyLock Config</title>
+<title>CandyLock</title>
 <style>
   body{font-family:sans-serif;background:#0e0e10;color:#efeff1;max-width:520px;margin:30px auto;padding:0 16px}
   h1{color:#9147ff;margin-bottom:4px}h2{color:#bf94ff;font-size:1em;margin:20px 0 6px}
@@ -33,13 +35,52 @@ String buildHTML(
   button:hover{background:#7c3aed}
   .note{font-size:.8em;color:#adadb8;margin-top:3px}
   hr{border:none;border-top:1px solid #3a3a3d;margin:18px 0}
+  /* Status dashboard */
+  .status{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .pill{flex:1;min-width:100px;background:#18181b;border:1px solid #3a3a3d;
+    border-radius:8px;padding:10px 12px;text-align:center}
+  .pill .k{font-size:.75em;text-transform:uppercase;letter-spacing:.05em;color:#adadb8}
+  .pill .v{font-size:1.1em;font-weight:bold;margin-top:4px}
+  .ok{color:#5cb85c}.no{color:#e05252}.on{color:#9147ff}
+  .solenoid{background:#9147ff;border-color:#9147ff}
+  .solenoid .v{color:#fff}
+  #chat{background:#18181b;border:1px solid #3a3a3d;border-radius:8px;
+    max-height:300px;overflow-y:auto;padding:6px 8px;font-size:.92em;margin-top:8px}
+  .chatline{padding:3px 6px;border-radius:4px;white-space:pre-wrap;word-break:break-word}
+  .chatline.trigger{background:#9147ff;color:#fff;font-weight:bold;box-shadow:inset 3px 0 0 #7c3aed}
+  .chatline .n{font-weight:bold;color:#bf94ff;margin-right:6px}
+  .chatline.trigger .n{color:#fff}
+  .chatline.empty{color:#5a5a5f;text-align:center;font-style:italic}
+  .banner{background:#18181b;border:1px solid #3a3a3d;border-radius:8px;
+    padding:8px 12px;font-size:.85em;color:#adadb8;margin:10px 0}
 </style>
 </head>
 <body>
 <h1>&#x1F512; CandyLock</h1>
-<form method="POST" action="/save">
+<p class="note">Live status &amp; chat. Unlock is triggered only by qualifying chat messages.</p>
+)rawhtml";
+  if (!debug) {
+    html += "<div class='banner'>&#x1F512; <b>Settings locked.</b> Edit mode is disabled because debug mode is off. Enable <code>ENABLE_DEBUG</code> at the top of the sketch to change settings.</div>";
+  }
+  html += R"rawhtml(
+<h2>Status</h2>
+<div class="status" id="status"></div>
+)rawhtml";
+  if (debug) {
+    html += "<button type='button' id='trigbtn' onclick='manualTrigger()' style='background:#7c3aed'>&#x26A1; Manual Unlock (debug)</button>";
+    html += "<button type='button' id='ledbtn' onclick='manualLedTest()' style='background:#2f855a;margin-top:8px'>&#x2B50; GPIO0 LED Test (debug)</button>";
+  }
+  html += R"rawhtml(
+<h2>Chat</h2>
+<div id="chat"><div class="chatline empty">Connecting&#8230;</div></div>
+<p class="note">Lines that triggered the unlock are highlighted purple. Last 30 messages.</p>
 
-  <h2>Twitch Channel</h2>
+<hr>
+<h2>Twitch Channel</h2>
+<form method="POST" action="/save">
+  <fieldset>)rawhtml";
+  html += locked;
+  html += R"rawhtml(>
   <input type="text" name="channel" placeholder="channelname (no #)" value=")rawhtml";
   html += channel;
   html += R"rawhtml("><br>
@@ -95,15 +136,79 @@ String buildHTML(
   html += R"rawhtml(</textarea>
 
   <button type="submit">&#x1F4BE; Save &amp; Apply</button>
+  </fieldset>
 </form>
 
 <hr>
 <h2>WiFi Credentials</h2>
 <form method="POST" action="/wifi">
+  <fieldset>)rawhtml";
+  html += locked;
+  html += R"rawhtml(>
   <input type="text"     name="ssid" placeholder="SSID"><br>
   <input type="password" name="psk"  placeholder="Password"><br>
   <button type="submit">Save WiFi &amp; Reboot</button>
+  </fieldset>
 </form>
+
+<script>
+function e(name, cls, label, value){
+  return '<div class="pill '+(cls||'')+'"><div class="k">'+label+'</div>'+
+         '<div class="v '+(cls||'')+'">'+value+'</div></div>';
+}
+function el(tag, cls, html){
+  var d=document.createElement(tag); if(cls) d.className=cls; d.innerHTML=html; return d;
+}
+function manualTrigger(){
+  fetch('/trigger', {method:'POST'}).then(function(r){
+    var b=document.getElementById('trigbtn');
+    if(b){ b.innerHTML = r.ok? '&#x26A1; Unlocked!' : '&#x26A1; Denied'; }
+    setTimeout(function(){ if(b) b.innerHTML='&#x26A1; Manual Unlock (debug)'; }, 1500);
+  });
+}
+function manualLedTest(){
+  fetch('/ledtest', {method:'POST'}).then(function(r){
+    var b=document.getElementById('ledbtn');
+    if(b){ b.innerHTML = r.ok? '&#x2B50; Lit!' : '&#x2B50; Denied'; }
+    setTimeout(function(){ if(b) b.innerHTML='&#x2B50; GPIO0 LED Test (debug)'; }, 1500);
+  });
+}
+function poll(){
+  fetch('/status').then(function(r){return r.json();}).then(function(s){
+    var wifi = s.wifi? '<span class="ok">Connected</span><br><small>'+esc(s.ssid)+' '+esc(s.ip)+'</small>'
+                      : '<span class="no">Disconnected</span>';
+    var irc  = s.irc? '<span class="ok">Connected</span><br><small>#'+esc(s.channel)+'</small>'
+                      : '<span class="no">Disconnected</span>';
+    var sol  = s.solenoid? '<span class="on">ACTIVE</span>' : '<span>Idle</span>';
+    document.getElementById('status').innerHTML =
+      e('','','WiFi',wifi) + e('','','Twitch',irc) +
+      e(s.solenoid?'solenoid':'','','Solenoid',sol);
+
+    var chat = document.getElementById('chat');
+    chat.innerHTML='';
+    if(!s.chat || s.chat.length===0){
+      chat.appendChild(el('div','chatline empty','No messages yet'));
+    } else {
+      s.chat.forEach(function(c){
+        var d = el('div', 'chatline'+(c.t?' trigger':''));
+        var nm = document.createElement('span');
+        nm.className = 'n';
+        nm.textContent = String(c.n || '') + ': ';
+        d.appendChild(nm);
+        d.appendChild(document.createTextNode(String(c.m || '')));
+        chat.appendChild(d);
+      });
+      chat.scrollTop = chat.scrollHeight;
+    }
+  }).catch(function(){});
+}
+function esc(s){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+          .replace(/"/g,'&quot;');
+}
+setInterval(poll, 1500);
+poll();
+</script>
 </body>
 </html>
 )rawhtml";
